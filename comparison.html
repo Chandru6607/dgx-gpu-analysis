@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Performance Comparison - DGX A100</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            dark: '#000000',
+                            card: '#1A1A1A',
+                            accent: '#76B900',
+                            accentHover: '#91D100',
+                            text: '#F3F4F6',
+                            muted: '#9CA3AF'
+                        }
+                    },
+                    animation: {
+                        'grow-width': 'growWidth 1.5s ease-out forwards',
+                    },
+                    keyframes: {
+                        growWidth: {
+                            '0%': { width: '0%' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #000000;
+            color: #F3F4F6;
+        }
+
+        .glass-nav {
+            background: rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(118, 185, 0, 0.3);
+        }
+
+        .bar-fill {
+            transition: width 1.5s ease-out;
+        }
+    </style>
+</head>
+
+<body class="antialiased font-sans">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 glass-nav top-0">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex-shrink-0 flex items-center gap-2">
+                    <span class="text-xl font-bold tracking-wider text-white">HPC GPU <span
+                            class="text-brand-accent">Analysis</span></span>
+                </div>
+                <div>
+                    <a href="index.html"
+                        class="text-gray-300 hover:text-brand-accent transition-colors flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                        </svg>
+                        Back to Home
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="pt-32 pb-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+            <h1 class="text-4xl md:text-5xl font-bold mb-6 text-white">Scenario Comparison</h1>
+            <p class="text-xl text-gray-400 max-w-3xl mx-auto">
+                Quantifying the impact of our architectural optimizations on the DGX A100.
+            </p>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-12 items-start">
+            <!-- Before Scenario -->
+            <div class="bg-zinc-900 border border-red-500/30 rounded-2xl p-8 relative overflow-hidden">
+                <div class="absolute top-0 right-0 bg-red-500 text-black text-xs font-bold px-3 py-1 rounded-bl-lg">
+                    BASELINE</div>
+                <h2 class="text-2xl font-bold text-white mb-2">Before Optimization</h2>
+                <p class="text-gray-400 text-sm mb-8">Naive port from V100. Memory bound and underutilizing Ampere
+                    features.</p>
+
+                <div class="space-y-6">
+                    <!-- Metric 1 -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-400">Execution Time</span>
+                            <span class="text-red-400 font-mono">12.5 ms</span>
+                        </div>
+                        <div class="h-4 bg-black rounded-full overflow-hidden">
+                            <div class="h-full bg-red-500 w-[80%]"></div>
+                        </div>
+                    </div>
+                    <!-- Metric 2 -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-400">Memory Throughput</span>
+                            <span class="text-red-400 font-mono">450 GB/s</span>
+                        </div>
+                        <div class="h-4 bg-black rounded-full overflow-hidden">
+                            <div class="h-full bg-red-500 w-[30%]"></div>
+                        </div>
+                    </div>
+                    <!-- Metric 3 -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-400">Compute Utilization</span>
+                            <span class="text-red-400 font-mono">15%</span>
+                        </div>
+                        <div class="h-4 bg-black rounded-full overflow-hidden">
+                            <div class="h-full bg-red-500 w-[15%]"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- After Scenario -->
+            <div
+                class="bg-zinc-900 border border-brand-accent/50 rounded-2xl p-8 relative overflow-hidden shadow-[0_0_30px_rgba(118,185,0,0.1)]">
+                <div
+                    class="absolute top-0 right-0 bg-brand-accent text-black text-xs font-bold px-3 py-1 rounded-bl-lg">
+                    OPTIMIZED</div>
+                <h2 class="text-2xl font-bold text-white mb-2">After Optimization</h2>
+                <p class="text-gray-400 text-sm mb-8">Hardware-aware kernel using cp.async, L2 persistence, and tiling.
+                </p>
+
+                <div class="space-y-6">
+                    <!-- Metric 1 -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-400">Execution Time</span>
+                            <span class="text-brand-accent font-mono">2.1 ms</span>
+                        </div>
+                        <div class="h-4 bg-black rounded-full overflow-hidden">
+                            <div class="h-full bg-brand-accent w-[15%] animate-grow-width"></div>
+                        </div>
+                        <p class="text-xs text-brand-accent mt-1">6x Speedup</p>
+                    </div>
+                    <!-- Metric 2 -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-400">Memory Throughput</span>
+                            <span class="text-brand-accent font-mono">1350 GB/s</span>
+                        </div>
+                        <div class="h-4 bg-black rounded-full overflow-hidden">
+                            <div class="h-full bg-brand-accent w-[90%] animate-grow-width"
+                                style="animation-delay: 0.2s"></div>
+                        </div>
+                        <p class="text-xs text-brand-accent mt-1">Near Peak Bandwidth</p>
+                    </div>
+                    <!-- Metric 3 -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-400">Compute Utilization</span>
+                            <span class="text-brand-accent font-mono">85%</span>
+                        </div>
+                        <div class="h-4 bg-black rounded-full overflow-hidden">
+                            <div class="h-full bg-brand-accent w-[85%] animate-grow-width"
+                                style="animation-delay: 0.4s"></div>
+                        </div>
+                        <p class="text-xs text-brand-accent mt-1">Compute Bound</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Section -->
+        <div class="mt-16 bg-zinc-900/50 border border-white/10 p-8 rounded-xl text-center">
+            <h3 class="text-2xl font-bold text-white mb-4">The Impact</h3>
+            <p class="text-gray-300 max-w-4xl mx-auto leading-relaxed">
+                By shifting from a naive implementation to one that respects the <span class="text-brand-accent">Ampere
+                    Architecture's</span> hierarchy, we transformed the workload from being memory-bound to
+                compute-bound. The use of <span class="text-white font-mono">cp.async</span> and <span
+                    class="text-white font-mono">L2 Persistence</span> were pivotal in saturating the HBM2e bandwidth
+                and feeding the tensor cores efficiently.
+            </p>
+        </div>
+    </div>
+
+</body>
+
+</html>

@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unveiling Performance: A CUDA-Based GPUAnalysis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            dark: '#000000', // NVIDIA Black
+                            card: '#1A1A1A', // Dark Gray for cards
+                            accent: '#76B900', // NVIDIA Green
+                            accentHover: '#91D100', // Lighter Green
+                            text: '#F3F4F6',
+                            muted: '#9CA3AF'
+                        }
+                    },
+                    animation: {
+                        'draw': 'draw 2s ease-out forwards',
+                        'fade-in': 'fadeIn 1s ease-out forwards',
+                        'pulse-slow': 'pulse 3s infinite',
+                    },
+                    keyframes: {
+                        draw: {
+                            '0%': { strokeDashoffset: '1000' },
+                            '100%': { strokeDashoffset: '0' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #000000;
+            color: #F3F4F6;
+        }
+
+        .glass-nav {
+            background: rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(118, 185, 0, 0.3);
+            /* Green border */
+        }
+
+        .gradient-text {
+            background: linear-gradient(to right, #76B900, #FFFFFF);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .card-hover {
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .card-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px -10px rgba(118, 185, 0, 0.3);
+            border-color: #76B900;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #000000;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #76B900;
+        }
+
+        /* Animation Classes */
+        .packet {
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .packet.animate-move {
+            opacity: 1;
+            animation: moveData 1.5s infinite linear;
+        }
+
+        @keyframes moveData {
+            0% {
+                transform: translateY(0);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateY(-100px);
+                opacity: 0;
+            }
+        }
+
+        .glow-active {
+            filter: drop-shadow(0 0 8px #76B900);
+            stroke: #76B900 !important;
+            stroke-width: 3px !important;
+        }
+
+        .tile-active {
+            fill: #76B900 !important;
+            fill-opacity: 0.3 !important;
+            stroke: #76B900 !important;
+        }
+
+        /* Roofline Animation */
+        .roof-line {
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 1000;
+        }
+
+        .roof-line.animate-draw {
+            animation: draw 2s ease-out forwards;
+        }
+
+        .point-marker {
+            opacity: 0;
+            transition: all 1s ease-out;
+        }
+
+        .point-marker.animate-point {
+            opacity: 1;
+            cx: 130;
+            cy: 80;
+        }
+
+        /* DGX Visual CSS */
+        .dgx-chip {
+            width: 200px;
+            height: 200px;
+            background: #1a1a1a;
+            border: 2px solid #76B900;
+            position: relative;
+            box-shadow: 0 0 20px rgba(118, 185, 0, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .dgx-core {
+            width: 120px;
+            height: 120px;
+            background: #000;
+            border: 1px solid #333;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2px;
+            padding: 2px;
+        }
+
+        .core-unit {
+            background: #333;
+            transition: background 0.5s;
+        }
+
+        .dgx-chip:hover .core-unit {
+            background: #76B900;
+            box-shadow: 0 0 5px #76B900;
+        }
+
+        .circuit-line {
+            position: absolute;
+            background: #76B900;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+
+<body class="antialiased font-sans selection:bg-brand-accent selection:text-black">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 glass-nav top-0">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex-shrink-0 flex items-center gap-2">
+                    <!-- Text Only Header -->
+                    <span class="text-xl font-bold tracking-wider text-white">HPC GPU <span
+                            class="text-brand-accent">Analysis</span></span>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-8">
+                        <a href="#uniqueness"
+                            class="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Uniqueness</a>
+                        <a href="#innovations"
+                            class="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Innovations</a>
+                        <a href="#methodology"
+                            class="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Methodology</a>
+                        <a href="comparison.html"
+                            class="bg-brand-accent text-black hover:bg-white px-4 py-2 rounded-md text-sm font-bold transition-colors">Scenario
+                            Comparison</a>
+                        <a href="#tools"
+                            class="hover:text-brand-accent px-3 py-2 rounded-md text-sm font-medium transition-colors">Tools</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden bg-black">
+        <!-- Green Glow Effects -->
+        <div class="absolute top-0 left-1/2 w-full -translate-x-1/2 h-full z-0 pointer-events-none opacity-30">
+            <div
+                class="absolute top-20 left-1/4 w-96 h-96 bg-brand-accent rounded-full mix-blend-screen filter blur-[128px] animate-pulse">
+            </div>
+        </div>
+
+        <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center z-10">
+            <h1 class="text-5xl md:text-7xl font-bold tracking-tight mb-6 text-white">
+                Unveiling Performance <br class="hidden md:block" />
+                <span class="text-brand-accent">A CUDA-Based GPUAnalysis</span>
+            </h1>
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-gray-400">
+                Pushing the boundaries of High Performance Computing through hardware-aware kernel design and rigorous
+                roofline analysis.
+            </p>
+
+            <!-- Animated DGX Visual -->
+            <div class="mt-12 flex justify-center">
+                <div class="dgx-chip group cursor-pointer">
+                    <!-- Decorative Circuit Lines -->
+                    <div class="circuit-line w-full h-[1px] top-4 left-0"></div>
+                    <div class="circuit-line w-full h-[1px] bottom-4 left-0"></div>
+                    <div class="circuit-line h-full w-[1px] left-4 top-0"></div>
+                    <div class="circuit-line h-full w-[1px] right-4 top-0"></div>
+
+                    <div class="dgx-core">
+                        <!-- 16 Core Units -->
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                        <div class="core-unit"></div>
+                    </div>
+                    <div class="absolute -bottom-8 text-brand-accent font-mono text-xs tracking-widest">DGX A100</div>
+                </div>
+            </div>
+
+            <div class="mt-10 flex justify-center gap-4">
+                <a href="#uniqueness"
+                    class="px-8 py-3 rounded-none bg-brand-accent text-black font-bold hover:bg-white transition-colors uppercase tracking-wide">
+                    Explore Project
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- 1. Project Uniqueness -->
+    <section id="uniqueness" class="py-20 bg-zinc-900 border-y border-white/5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="lg:grid lg:grid-cols-2 lg:gap-16 items-center">
+                <div>
+                    <h2 class="text-3xl font-bold mb-6 text-white">Unlocking Ampere: <span
+                            class="text-brand-accent">Hardware-Software Co-Design</span></h2>
+                    <p class="text-lg text-gray-300 leading-relaxed mb-6">
+                        This project moves beyond naive porting. By deeply understanding the <span
+                            class="text-brand-accent font-semibold">DGX A100's HBM2e memory system</span> and the
+                        specific capabilities of the <span class="text-brand-accent font-semibold">Ampere
+                            Architecture</span>, we implemented a co-design strategy.
+                    </p>
+                    <p class="text-lg text-gray-300 leading-relaxed">
+                        The goal was not just "faster code," but code that naturally fits the hardware, exploiting
+                        architectural features to realize the GPU's true potential.
+                    </p>
+                </div>
+                <div class="mt-10 lg:mt-0 relative">
+                    <div class="absolute inset-0 bg-brand-accent rounded-none blur opacity-10"></div>
+                    <div class="relative bg-black border border-brand-accent/30 p-8">
+                        <div class="flex items-center space-x-4 mb-4">
+                            <div class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z">
+                                    </path>
+                                </svg>
+                            </div>
+                            <h3 class="text-xl font-semibold text-white">Key Differentiator</h3>
+                        </div>
+                        <ul class="space-y-3 text-gray-400">
+                            <li class="flex items-start"><span class="text-brand-accent mr-2">✓</span> Exploiting HBM2e
+                                Bandwidth</li>
+                            <li class="flex items-start"><span class="text-brand-accent mr-2">✓</span> Ampere-specific
+                                ISA instructions</li>
+                            <li class="flex items-start"><span class="text-brand-accent mr-2">✓</span> Latency hiding
+                                via async copy</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. Architectural Changes (Scrollytelling) -->
+    <section id="innovations" class="py-20 bg-black relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4 text-white">Three Major <span
+                        class="text-brand-accent">CUDA Kernel Innovations</span></h2>
+                <p class="text-gray-400 max-w-2xl mx-auto">Scroll to explore the architectural optimizations.</p>
+            </div>
+
+            <div class="lg:grid lg:grid-cols-2 gap-12">
+                <!-- Sticky Visual Column -->
+                <div class="hidden lg:block relative">
+                    <div
+                        class="sticky top-32 h-[500px] bg-zinc-900 border border-white/10 rounded-xl p-6 flex items-center justify-center overflow-hidden">
+                        <!-- Interactive SVG Diagram -->
+                        <svg id="arch-diagram" viewBox="0 0 400 600" class="w-full h-full">
+                            <!-- Background Grid -->
+                            <defs>
+                                <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                                    <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#333" stroke-width="0.5" />
+                                </pattern>
+                            </defs>
+                            <rect width="100%" height="100%" fill="url(#grid)" />
+
+                            <!-- HBM2e Memory (Bottom) -->
+                            <g id="hbm-layer">
+                                <rect x="50" y="500" width="300" height="60" rx="4" fill="#1A1A1A" stroke="#4B5563"
+                                    stroke-width="2" />
+                                <text x="200" y="535" fill="#9CA3AF" font-size="14" text-anchor="middle"
+                                    font-weight="bold">HBM2e Global Memory</text>
+                            </g>
+
+                            <!-- Data Packets (Hidden by default) -->
+                            <g id="data-packets" class="packet">
+                                <circle cx="100" cy="480" r="4" fill="#76B900" />
+                                <circle cx="150" cy="490" r="4" fill="#76B900" />
+                                <circle cx="250" cy="480" r="4" fill="#76B900" />
+                                <circle cx="300" cy="490" r="4" fill="#76B900" />
+                            </g>
+
+                            <!-- L2 Cache (Middle) -->
+                            <g id="l2-layer">
+                                <rect id="l2-rect" x="80" y="350" width="240" height="80" rx="4" fill="#1A1A1A"
+                                    stroke="#4B5563" stroke-width="2" transition="all 0.3s" />
+                                <text x="200" y="395" fill="#9CA3AF" font-size="14" text-anchor="middle"
+                                    font-weight="bold">L2 Cache (40MB)</text>
+                            </g>
+
+                            <!-- SM / Shared Memory (Top) -->
+                            <g id="sm-layer">
+                                <rect x="50" y="50" width="300" height="200" rx="8" fill="#1A1A1A" stroke="#4B5563"
+                                    stroke-width="2" />
+                                <text x="200" y="80" fill="#FFFFFF" font-size="16" text-anchor="middle"
+                                    font-weight="bold">Streaming Multiprocessor (SM)</text>
+
+                                <!-- Shared Memory Block -->
+                                <rect id="shmem-rect" x="100" y="120" width="200" height="100" rx="4" fill="#2D3748"
+                                    stroke="#4B5563" stroke-width="2" transition="all 0.3s" />
+                                <text x="200" y="175" fill="#9CA3AF" font-size="12" text-anchor="middle">Shared Memory
+                                    (164KB)</text>
+
+                                <!-- Tiling Pattern (Hidden) -->
+                                <g id="tiling-pattern" opacity="0" transition="opacity 0.3s">
+                                    <rect x="110" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="155" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="200" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="245" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="110" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="155" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="200" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="245" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                </g>
+                            </g>
+
+                            <!-- Connecting Lines -->
+                            <line x1="200" y1="500" x2="200" y2="430" stroke="#4B5563" stroke-width="2"
+                                stroke-dasharray="4" />
+                            <line x1="200" y1="350" x2="200" y2="250" stroke="#4B5563" stroke-width="2"
+                                stroke-dasharray="4" />
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Scrolling Text Column -->
+                <div class="space-y-32 py-12">
+                    <!-- Step 1: Async Copy -->
+                    <div class="step-card bg-zinc-900/80 backdrop-blur border border-white/10 p-8 rounded-2xl transition-all duration-500 opacity-50"
+                        data-step="1">
+                        <div
+                            class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black font-bold text-xl mb-4 rounded">
+                            01</div>
+                        <h3 class="text-2xl font-bold text-white mb-4">Asynchronous Copy</h3>
+                        <code
+                            class="text-sm bg-black border border-gray-700 text-brand-accent px-2 py-1 mb-4 inline-block font-mono">cp.async</code>
+                        <p class="text-gray-400 leading-relaxed">
+                            We implemented <span class="text-white">cp.async</span> to create a direct, non-blocking
+                            path from Global Memory to Shared Memory.
+                            <br><br>
+                            <strong>Animation:</strong> Watch the data packets move. This instruction allows the CUDA
+                            cores to continue computing while data is being fetched, effectively hiding the massive
+                            latency of HBM2e access.
+                        </p>
+                    </div>
+
+                    <!-- Step 2: L2 Persistence -->
+                    <div class="step-card bg-zinc-900/80 backdrop-blur border border-white/10 p-8 rounded-2xl transition-all duration-500 opacity-50"
+                        data-step="2">
+                        <div
+                            class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black font-bold text-xl mb-4 rounded">
+                            02</div>
+                        <h3 class="text-2xl font-bold text-white mb-4">L2 Cache Persistence</h3>
+                        <code
+                            class="text-sm bg-black border border-gray-700 text-brand-accent px-2 py-1 mb-4 inline-block font-mono">cudaAccessPropertyPersisting</code>
+                        <p class="text-gray-400 leading-relaxed">
+                            The A100 features a massive <span class="text-white">40MB L2 Cache</span>. We tuned the
+                            access properties to mark critical data as "persisting".
+                            <br><br>
+                            <strong>Visual:</strong> The L2 Cache block glows green. This ensures frequently used data
+                            stays "hot" in the cache, preventing it from being evicted and reducing costly trips back to
+                            Global Memory.
+                        </p>
+                    </div>
+
+                    <!-- Step 3: Tiling -->
+                    <div class="step-card bg-zinc-900/80 backdrop-blur border border-white/10 p-8 rounded-2xl transition-all duration-500 opacity-50"
+                        data-step="3">
+                        <div
+                            class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black font-bold text-xl mb-4 rounded">
+                            03</div>
+                        <h3 class="text-2xl font-bold text-white mb-4">Optimized Tiling</h3>
+                        <code
+                            class="text-sm bg-black border border-gray-700 text-brand-accent px-2 py-1 mb-4 inline-block font-mono">Shared Memory Tiling</code>
+                        <p class="text-gray-400 leading-relaxed">
+                            Leveraging the Ampere SM's increased <span class="text-white">164KB Shared Memory</span>
+                            capacity, we redesigned our data tiles.
+                            <br><br>
+                            <strong>Visual:</strong> The Shared Memory block expands and shows a dense tiling pattern.
+                            Larger tiles mean more data reuse and fewer global memory transactions, pushing performance
+                            closer to the compute roof.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3. Analysis Methodology -->
+    <section id="methodology" class="py-20 bg-zinc-900 border-y border-white/5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="lg:grid lg:grid-cols-2 lg:gap-16 items-center">
+                <div class="order-2 lg:order-1 mt-10 lg:mt-0 flex justify-center">
+                    <!-- Advanced Animated Roofline SVG -->
+                    <div
+                        class="relative w-full max-w-md bg-black border border-brand-accent/30 p-6 shadow-2xl overflow-hidden">
+                        <h4 class="text-center text-brand-accent text-sm mb-4 uppercase tracking-widest">Advanced
+                            Roofline Analysis</h4>
+                        <svg id="roofline-anim" viewBox="0 0 400 300" class="w-full h-auto">
+                            <!-- Axes -->
+                            <line x1="40" y1="260" x2="380" y2="260" stroke="#4B5563" stroke-width="2" />
+                            <line x1="40" y1="260" x2="40" y2="20" stroke="#4B5563" stroke-width="2" />
+                            <text x="200" y="290" fill="#9CA3AF" font-size="12" text-anchor="middle">Arithmetic
+                                Intensity (FLOPS/Byte)</text>
+                            <text x="20" y="150" fill="#9CA3AF" font-size="12" text-anchor="middle"
+                                transform="rotate(-90 20,150)">Performance (GFLOPS)</text>
+
+                            <!-- Roofs (Animated) -->
+                            <path class="roof-line" d="M40 260 L140 60 L380 60" fill="none" stroke="#76B900"
+                                stroke-width="3" />
+
+                            <text x="280" y="50" fill="#76B900" font-size="12" font-weight="bold"
+                                class="opacity-0 animate-fade-in" style="animation-delay: 1.5s">Compute Roof
+                                (SOL)</text>
+                            <text x="90" y="180" fill="#76B900" font-size="12" transform="rotate(-63 90,180)"
+                                class="opacity-0 animate-fade-in" style="animation-delay: 1.5s">Bandwidth Roof</text>
+
+                            <!-- Baseline Point -->
+                            <circle cx="80" cy="200" r="6" fill="#EF4444" class="opacity-0 animate-fade-in"
+                                style="animation-delay: 2s" />
+                            <text x="95" y="205" fill="#EF4444" font-size="10" class="opacity-0 animate-fade-in"
+                                style="animation-delay: 2s">Baseline</text>
+
+                            <!-- Optimized Point (Animated Movement) -->
+                            <circle id="opt-point" cx="80" cy="200" r="6" fill="#FFFFFF" stroke="#76B900"
+                                stroke-width="2" class="point-marker" />
+                            <text x="145" y="85" fill="#FFFFFF" font-size="10" class="point-marker">Optimized</text>
+
+                            <!-- Trajectory Line -->
+                            <!-- L2 Cache (Middle) -->
+                            <g id="l2-layer">
+                                <rect id="l2-rect" x="80" y="350" width="240" height="80" rx="4" fill="#1A1A1A"
+                                    stroke="#4B5563" stroke-width="2" transition="all 0.3s" />
+                                <text x="200" y="395" fill="#9CA3AF" font-size="14" text-anchor="middle"
+                                    font-weight="bold">L2 Cache (40MB)</text>
+                            </g>
+
+                            <!-- SM / Shared Memory (Top) -->
+                            <g id="sm-layer">
+                                <rect x="50" y="50" width="300" height="200" rx="8" fill="#1A1A1A" stroke="#4B5563"
+                                    stroke-width="2" />
+                                <text x="200" y="80" fill="#FFFFFF" font-size="16" text-anchor="middle"
+                                    font-weight="bold">Streaming Multiprocessor (SM)</text>
+
+                                <!-- Shared Memory Block -->
+                                <rect id="shmem-rect" x="100" y="120" width="200" height="100" rx="4" fill="#2D3748"
+                                    stroke="#4B5563" stroke-width="2" transition="all 0.3s" />
+                                <text x="200" y="175" fill="#9CA3AF" font-size="12" text-anchor="middle">Shared Memory
+                                    (164KB)</text>
+
+                                <!-- Tiling Pattern (Hidden) -->
+                                <g id="tiling-pattern" opacity="0" transition="opacity 0.3s">
+                                    <rect x="110" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="155" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="200" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="245" y="130" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="110" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="155" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="200" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                    <rect x="245" y="175" width="40" height="40" fill="none" stroke="#76B900"
+                                        stroke-width="1" />
+                                </g>
+                            </g>
+
+                            <!-- Connecting Lines -->
+                            <line x1="200" y1="500" x2="200" y2="430" stroke="#4B5563" stroke-width="2"
+                                stroke-dasharray="4" />
+                            <line x1="200" y1="350" x2="200" y2="250" stroke="#4B5563" stroke-width="2"
+                                stroke-dasharray="4" />
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Scrolling Text Column -->
+                <div class="space-y-32 py-12">
+                    <!-- Step 1: Async Copy -->
+                    <div class="step-card bg-zinc-900/80 backdrop-blur border border-white/10 p-8 rounded-2xl transition-all duration-500 opacity-50"
+                        data-step="1">
+                        <div
+                            class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black font-bold text-xl mb-4 rounded">
+                            01</div>
+                        <h3 class="text-2xl font-bold text-white mb-4">Asynchronous Copy</h3>
+                        <code
+                            class="text-sm bg-black border border-gray-700 text-brand-accent px-2 py-1 mb-4 inline-block font-mono">cp.async</code>
+                        <p class="text-gray-400 leading-relaxed">
+                            We implemented <span class="text-white">cp.async</span> to create a direct, non-blocking
+                            path from Global Memory to Shared Memory.
+                            <br><br>
+                            <strong>Animation:</strong> Watch the data packets move. This instruction allows the CUDA
+                            cores to continue computing while data is being fetched, effectively hiding the massive
+                            latency of HBM2e access.
+                        </p>
+                    </div>
+
+                    <!-- Step 2: L2 Persistence -->
+                    <div class="step-card bg-zinc-900/80 backdrop-blur border border-white/10 p-8 rounded-2xl transition-all duration-500 opacity-50"
+                        data-step="2">
+                        <div
+                            class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black font-bold text-xl mb-4 rounded">
+                            02</div>
+                        <h3 class="text-2xl font-bold text-white mb-4">L2 Cache Persistence</h3>
+                        <code
+                            class="text-sm bg-black border border-gray-700 text-brand-accent px-2 py-1 mb-4 inline-block font-mono">cudaAccessPropertyPersisting</code>
+                        <p class="text-gray-400 leading-relaxed">
+                            The A100 features a massive <span class="text-white">40MB L2 Cache</span>. We tuned the
+                            access properties to mark critical data as "persisting".
+                            <br><br>
+                            <strong>Visual:</strong> The L2 Cache block glows green. This ensures frequently used data
+                            stays "hot" in the cache, preventing it from being evicted and reducing costly trips back to
+                            Global Memory.
+                        </p>
+                    </div>
+
+                    <!-- Step 3: Tiling -->
+                    <div class="step-card bg-zinc-900/80 backdrop-blur border border-white/10 p-8 rounded-2xl transition-all duration-500 opacity-50"
+                        data-step="3">
+                        <div
+                            class="w-12 h-12 bg-brand-accent flex items-center justify-center text-black font-bold text-xl mb-4 rounded">
+                            03</div>
+                        <h3 class="text-2xl font-bold text-white mb-4">Optimized Tiling</h3>
+                        <code
+                            class="text-sm bg-black border border-gray-700 text-brand-accent px-2 py-1 mb-4 inline-block font-mono">Shared Memory Tiling</code>
+                        <p class="text-gray-400 leading-relaxed">
+                            Leveraging the Ampere SM's increased <span class="text-white">164KB Shared Memory</span>
+                            capacity, we redesigned our data tiles.
+                            <br><br>
+                            <strong>Visual:</strong> The Shared Memory block expands and shows a dense tiling pattern.
+                            Larger tiles mean more data reuse and fewer global memory transactions, pushing performance
+                            closer to the compute roof.
+                        </p>
+                    </div>
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div class="text-center mb-16">
+                            <h2 class="text-3xl font-bold mb-4 text-white">Verification with <span
+                                    class="text-brand-accent">NVIDIA
+                                    Nsight Suite</span></h2>
+                            <p class="text-gray-400">Deep dive into the profiling data.</p>
+                        </div>
+
+                        <div class="grid md:grid-cols-2 gap-12 max-w-6xl mx-auto">
+                            <!-- Tool 1: Nsight Systems (Animated Timeline) -->
+                            <div id="nsys-card"
+                                class="border border-white/10 p-1 hover:border-brand-accent transition-colors duration-300 group cursor-pointer">
+                                <div class="bg-zinc-900 h-full p-6 flex flex-col">
+                                    <div class="flex items-center justify-between mb-6">
+                                        <h3 class="text-xl font-bold text-white">Nsight Systems</h3>
+                                        <span
+                                            class="text-xs font-mono bg-black border border-gray-700 text-brand-accent px-2 py-1">nsys</span>
+                                    </div>
+
+                                    <!-- Animated Timeline Visual -->
+                                    <div
+                                        class="relative h-40 bg-black border border-gray-800 mb-6 overflow-hidden rounded">
+                                        <!-- Rows -->
+                                        <div class="absolute top-2 left-2 text-[10px] text-gray-500">CPU</div>
+                                        <div class="absolute top-14 left-2 text-[10px] text-gray-500">CUDA API</div>
+                                        <div class="absolute top-26 left-2 text-[10px] text-gray-500">GPU</div>
+
+                                        <!-- Events (Initially Hidden/Masked) -->
+                                        <div id="nsys-events" class="w-full h-full">
+                                            <!-- CPU Blocks -->
+                                            <div class="absolute top-6 left-10 w-20 h-4 bg-blue-500 opacity-80"></div>
+                                            <div class="absolute top-6 left-40 w-10 h-4 bg-blue-500 opacity-80"></div>
+                                            <div class="absolute top-6 left-60 w-30 h-4 bg-blue-500 opacity-80"></div>
+
+                                            <!-- API Blocks -->
+                                            <div class="absolute top-18 left-30 w-5 h-4 bg-yellow-500 opacity-80"></div>
+                                            <div class="absolute top-18 left-55 w-5 h-4 bg-yellow-500 opacity-80"></div>
+
+                                            <!-- GPU Blocks -->
+                                            <div class="absolute top-30 left-35 w-15 h-4 bg-brand-accent opacity-90">
+                                            </div>
+                                            <div class="absolute top-30 left-60 w-25 h-4 bg-brand-accent opacity-90">
+                                            </div>
+                                        </div>
+
+                                        <!-- Scan Line -->
+                                        <div id="nsys-scanline"
+                                            class="absolute top-0 left-0 w-0.5 h-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)] z-10">
+                                        </div>
+                                    </div>
+
+                                    <p class="text-gray-400 mb-4 text-sm"><strong>Timeline Visualization</strong>:
+                                        Visualize
+                                        CPU-GPU
+                                        interactions and identify synchronization stalls.</p>
+                                    <ul class="text-sm text-gray-500 space-y-2 mt-auto">
+                                        <li class="flex items-center"><span
+                                                class="w-1.5 h-1.5 bg-brand-accent rounded-full mr-2"></span>Trace CUDA
+                                            API
+                                            calls
+                                        </li>
+                                        <li class="flex items-center"><span
+                                                class="w-1.5 h-1.5 bg-brand-accent rounded-full mr-2"></span>Analyze
+                                            Kernel
+                                            Concurrency</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Tool 2: Nsight Compute (Animated SOL Gauges) -->
+                            <div id="ncu-card"
+                                class="border border-white/10 p-1 hover:border-brand-accent transition-colors duration-300 group cursor-pointer">
+                                <div class="bg-zinc-900 h-full p-6 flex flex-col">
+                                    <div class="flex items-center justify-between mb-6">
+                                        <h3 class="text-xl font-bold text-white">Nsight Compute</h3>
+                                        <span
+                                            class="text-xs font-mono bg-black border border-gray-700 text-brand-accent px-2 py-1">ncu</span>
+                                    </div>
+
+                                    <!-- Animated Gauges Visual -->
+                                    <div class="flex justify-around mb-6">
+                                        <!-- SM Throughput Gauge -->
+                                        <div class="text-center">
+                                            <div class="relative w-24 h-24 flex items-center justify-center">
+                                                <svg class="w-full h-full transform -rotate-90">
+                                                    <circle cx="48" cy="48" r="40" stroke="#333" stroke-width="8"
+                                                        fill="none" />
+                                                    <circle id="sm-gauge" cx="48" cy="48" r="40" stroke="#76B900"
+                                                        stroke-width="8" fill="none" stroke-dasharray="251"
+                                                        stroke-dashoffset="251"
+                                                        class="transition-all duration-[2000ms] ease-out" />
+                                                </svg>
+                                                <div class="absolute text-white font-bold text-lg"><span
+                                                        id="sm-value">0</span>%
+                                                </div>
+                                            </div>
+                                            <p class="text-xs text-gray-400 mt-2">SM Throughput</p>
+                                        </div>
+
+                                        <!-- Memory Throughput Gauge -->
+                                        <div class="text-center">
+                                            <div class="relative w-24 h-24 flex items-center justify-center">
+                                                <svg class="w-full h-full transform -rotate-90">
+                                                    <circle cx="48" cy="48" r="40" stroke="#333" stroke-width="8"
+                                                        fill="none" />
+                                                    <circle id="mem-gauge" cx="48" cy="48" r="40" stroke="#76B900"
+                                                        stroke-width="8" fill="none" stroke-dasharray="251"
+                                                        stroke-dashoffset="251"
+                                                        class="transition-all duration-[2000ms] ease-out" />
+                                                </svg>
+                                                <div class="absolute text-white font-bold text-lg"><span
+                                                        id="mem-value">0</span>%
+                                                </div>
+                                            </div>
+                                            <p class="text-xs text-gray-400 mt-2">Mem Throughput</p>
+                                        </div>
+                                    </div>
+
+                                    <p class="text-gray-400 mb-4 text-sm"><strong>Kernel Profiling</strong>: Inspect
+                                        Speed-of-Light
+                                        (SOL) metrics to identify bottlenecks.</p>
+                                    <ul class="text-sm text-gray-500 space-y-2 mt-auto">
+                                        <li class="flex items-center"><span
+                                                class="w-1.5 h-1.5 bg-brand-accent rounded-full mr-2"></span>Analyze
+                                            Instruction
+                                            Mix
+                                        </li>
+                                        <li class="flex items-center"><span
+                                                class="w-1.5 h-1.5 bg-brand-accent rounded-full mr-2"></span>Optimize
+                                            Cache
+                                            Usage
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-8 border-t border-white/10 text-center bg-black">
+        <p class="text-gray-600 text-sm">
+            &copy; 2025 GPU Analysis Project. Built with <span class="text-brand-accent">Tailwind CSS</span>.
+        </p>
+    </footer>
+
+    <!-- Scrollytelling & Animation Script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Scrollytelling Logic (Existing) ---
+            const steps = document.querySelectorAll('.step-card');
+            const packets = document.getElementById('data-packets');
+            const l2Rect = document.getElementById('l2-rect');
+            const shmemRect = document.getElementById('shmem-rect');
+            const tilingPattern = document.getElementById('tiling-pattern');
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        steps.forEach(s => {
+                            s.classList.remove('opacity-100', 'border-brand-accent');
+                            s.classList.add('opacity-50', 'border-white/10');
+                        });
+                        entry.target.classList.remove('opacity-50', 'border-white/10');
+                        entry.target.classList.add('opacity-100', 'border-brand-accent');
+
+                        const step = entry.target.dataset.step;
+
+                        packets.classList.remove('animate-move');
+                        l2Rect.classList.remove('glow-active');
+                        shmemRect.classList.remove('glow-active');
+                        tilingPattern.style.opacity = '0';
+
+                        if (step === '1') {
+                            packets.classList.add('animate-move');
+                        } else if (step === '2') {
+                            l2Rect.classList.add('glow-active');
+                        } else if (step === '3') {
+                            shmemRect.classList.add('glow-active');
+                            tilingPattern.style.opacity = '1';
+                        }
+                    }
+                });
+            }, {
+                threshold: 0.6,
+                rootMargin: "-20% 0px -20% 0px"
+            });
+
+            steps.forEach(step => observer.observe(step));
+
+            // --- Roofline Animation Logic (Existing) ---
+            const rooflineSection = document.getElementById('methodology');
+            const roofLine = document.querySelector('.roof-line');
+            const optPoint = document.getElementById('opt-point');
+            const optText = document.querySelector('text.point-marker');
+            let playedRoofline = false;
+
+            const playRooflineAnimation = () => {
+                roofLine.classList.remove('animate-draw');
+                optPoint.classList.remove('animate-point');
+                optText.classList.remove('animate-point');
+
+                void roofLine.offsetWidth;
+
+                roofLine.classList.add('animate-draw');
+                setTimeout(() => {
+                    optPoint.classList.add('animate-point');
+                    optText.classList.add('animate-point');
+                }, 2500);
+            };
+
+            const rooflineObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && !playedRoofline) {
+                        playRooflineAnimation();
+                        playedRoofline = true;
+                    }
+                });
+            }, { threshold: 0.5 });
+
+            rooflineObserver.observe(rooflineSection);
+            document.getElementById('replay-roofline').addEventListener('click', playRooflineAnimation);
+
+            // --- Tools Animation Logic (New with Replay) ---
+            const toolsSection = document.getElementById('tools');
+            const nsysCard = document.getElementById('nsys-card');
+            const ncuCard = document.getElementById('ncu-card');
+
+            const nsysScanline = document.getElementById('nsys-scanline');
+            const smGauge = document.getElementById('sm-gauge');
+            const memGauge = document.getElementById('mem-gauge');
+            const smValue = document.getElementById('sm-value');
+            const memValue = document.getElementById('mem-value');
+
+            let playedTools = false;
+
+            const animateValue = (obj, start, end, duration) => {
+                let startTimestamp = null;
+                const step = (timestamp) => {
+                    if (!startTimestamp) startTimestamp = timestamp;
+                    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                    obj.innerHTML = Math.floor(progress * (end - start) + start);
+                    if (progress < 1) {
+                        window.requestAnimationFrame(step);
+                    }
+                };
+                window.requestAnimationFrame(step);
+            };
+
+            const playNsysAnimation = () => {
+                nsysScanline.style.transition = 'none';
+                nsysScanline.style.left = '0%';
+                void nsysScanline.offsetWidth; // Trigger reflow
+                nsysScanline.style.transition = 'left 3s linear';
+                nsysScanline.style.left = '100%';
+            };
+
+            const playNcuAnimation = () => {
+                // Reset
+                smGauge.style.transition = 'none';
+                memGauge.style.transition = 'none';
+                smGauge.style.strokeDashoffset = '251';
+                memGauge.style.strokeDashoffset = '251';
+                smValue.innerHTML = '0';
+                memValue.innerHTML = '0';
+
+                void smGauge.offsetWidth; // Trigger reflow
+
+                // Animate
+                smGauge.style.transition = 'stroke-dashoffset 2s ease-out';
+                memGauge.style.transition = 'stroke-dashoffset 2s ease-out';
+
+                setTimeout(() => {
+                    smGauge.style.strokeDashoffset = '38'; // ~85%
+                    animateValue(smValue, 0, 85, 2000);
+                }, 100);
+
+                setTimeout(() => {
+                    memGauge.style.strokeDashoffset = '20'; // ~92%
+                    animateValue(memValue, 0, 92, 2000);
+                }, 100);
+            };
+
+            const toolsObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && !playedTools) {
+                        playNsysAnimation();
+                        setTimeout(playNcuAnimation, 500);
+                        playedTools = true;
+                    }
+                });
+            }, { threshold: 0.4 });
+
+            toolsObserver.observe(toolsSection);
+
+            // Hover Replay Logic
+            nsysCard.addEventListener('mouseenter', playNsysAnimation);
+            ncuCard.addEventListener('mouseenter', playNcuAnimation);
+        });
+    </script>
+</body>
+
+</html>
+```
